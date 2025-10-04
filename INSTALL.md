@@ -159,7 +159,6 @@ python manage.py migrate
 dds_manager/
 ├── core/                    # Основное приложение
 ├── templates/              # HTML шаблоны
-├── static/                # CSS, JS файлы
 ├── db.sqlite3            # База данных
 ├── requirements.txt       # Зависимости
 └── manage.py             # Управление Django
