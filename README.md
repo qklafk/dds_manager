@@ -108,7 +108,6 @@ dds_manager/
 ├── templates/              # HTML шаблоны
 │   ├── base.html          # Базовый шаблон
 │   └── core/              # Шаблоны приложения
-├── static/                # CSS, JS файлы
 ├── requirements.txt       # Зависимости
 └── manage.py             # Django управление
 ```
