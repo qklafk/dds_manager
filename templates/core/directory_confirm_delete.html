@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ title }} - ДДС Менеджер{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h4 class="mb-0">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    {{ title }}
+                </h4>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <strong>Внимание!</strong> Это действие нельзя отменить.
+                </div>
+
+                <p>Вы уверены, что хотите удалить {{ model_name }}?</p>
+
+                <div class="card bg-light">
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Название:</strong></div>
+                            <div class="col-sm-9">{{ object.name }}</div>
+                        </div>
+                        {% if object.type %}
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Тип:</strong></div>
+                            <div class="col-sm-9">
+                                <span class="badge {% if 'Пополнение' in object.type.name or 'Replenishment' in object.type.name %}bg-success{% else %}bg-warning{% endif %}">
+                                    {{ object.type.name }}
+                                </span>
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% if object.category %}
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Категория:</strong></div>
+                            <div class="col-sm-9">{{ object.category.name }}</div>
+                        </div>
+                        {% endif %}
+                        {% if object.description %}
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Описание:</strong></div>
+                            <div class="col-sm-9">{{ object.description }}</div>
+                        </div>
+                        {% endif %}
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Создано:</strong></div>
+                            <div class="col-sm-9">{{ object.created_at|date:"d.m.Y H:i" }}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <form method="post" class="mt-4">
+                    {% csrf_token %}
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'core:directory_management' %}" class="btn btn-secondary">
+                            <i class="bi bi-arrow-left"></i> Отмена
+                        </a>
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-trash"></i> 
+                            {% if 'subcategory' in request.path %}Удалить подкатегорию
+                            {% elif 'category' in request.path %}Удалить категорию
+                            {% elif 'status' in request.path %}Удалить статус
+                            {% elif 'type' in request.path %}Удалить тип
+                            {% else %}Удалить элемент{% endif %}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

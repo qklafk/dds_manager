@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ title }} - ДДС Менеджер{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h4 class="mb-0">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    {{ title }}
+                </h4>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <strong>Внимание!</strong> Это действие нельзя отменить.
+                </div>
+
+                <p>Вы уверены, что хотите удалить следующую запись денежного потока?</p>
+
+                <div class="card bg-light">
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Дата:</strong></div>
+                            <div class="col-sm-9">{{ record.date|date:"d.m.Y" }}</div>
+                        </div>
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Статус:</strong></div>
+                            <div class="col-sm-9">
+                                <span class="badge bg-secondary">{{ record.status.name }}</span>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Тип:</strong></div>
+                            <div class="col-sm-9">
+                                <span class="badge {% if 'Пополнение' in record.type.name or 'Replenishment' in record.type.name %}bg-success{% else %}bg-warning{% endif %}">
+                                    {{ record.type.name }}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Категория:</strong></div>
+                            <div class="col-sm-9">{{ record.category.name }}</div>
+                        </div>
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Подкатегория:</strong></div>
+                            <div class="col-sm-9">{{ record.subcategory.name }}</div>
+                        </div>
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Сумма:</strong></div>
+                            <div class="col-sm-9">
+                                <span class="{% if 'Пополнение' in record.type.name or 'Replenishment' in record.type.name %}amount-positive{% else %}amount-negative{% endif %}">
+                                    {{ record.amount|floatformat:2 }} ₽
+                                </span>
+                            </div>
+                        </div>
+                        {% if record.comment %}
+                        <div class="row">
+                            <div class="col-sm-3"><strong>Комментарий:</strong></div>
+                            <div class="col-sm-9">{{ record.comment }}</div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <form method="post" class="mt-4">
+                    {% csrf_token %}
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'core:index' %}" class="btn btn-secondary">
+                            <i class="bi bi-arrow-left"></i> Отмена
+                        </a>
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-trash"></i> Удалить запись
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

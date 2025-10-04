@@ -1,0 +1,217 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ title }} - ДДС Менеджер{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0">
+                    <i class="bi bi-{% if action == 'create' %}plus-circle{% else %}pencil{% endif %}"></i>
+                    {{ title }}
+                </h4>
+                <small class="text-muted">
+                    <i class="bi bi-info-circle"></i> 
+                    Нужно добавить новые статусы, типы, категории или подкатегории? 
+                    <a href="{% url 'core:directory_management' %}" class="text-decoration-none">Управляйте списками здесь</a>
+                </small>
+            </div>
+            <div class="card-body">
+                <form method="post" id="recordForm">
+                    {% csrf_token %}
+                    
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="{{ form.date.id_for_label }}" class="form-label">
+                                {{ form.date.label }} <span class="text-danger">*</span>
+                            </label>
+                            {{ form.date }}
+                            <div class="form-text">
+                                <i class="bi bi-info-circle"></i> 
+                                Можно указать будущую дату для планирования операций
+                            </div>
+                            {% if form.date.errors %}
+                                <div class="text-danger small mt-1">
+                                    {% for error in form.date.errors %}{{ error }}{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="{{ form.status.id_for_label }}" class="form-label">
+                                {{ form.status.label }} <span class="text-danger">*</span>
+                            </label>
+                            {{ form.status }}
+                            {% if form.status.errors %}
+                                <div class="text-danger small mt-1">
+                                    {% for error in form.status.errors %}{{ error }}{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="{{ form.type.id_for_label }}" class="form-label">
+                                {{ form.type.label }} <span class="text-danger">*</span>
+                            </label>
+                            {{ form.type }}
+                            {% if form.type.errors %}
+                                <div class="text-danger small mt-1">
+                                    {% for error in form.type.errors %}{{ error }}{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="{{ form.category.id_for_label }}" class="form-label">
+                                {{ form.category.label }} <span class="text-danger">*</span>
+                            </label>
+                            {{ form.category }}
+                            {% if form.category.errors %}
+                                <div class="text-danger small mt-1">
+                                    {% for error in form.category.errors %}{{ error }}{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="{{ form.subcategory.id_for_label }}" class="form-label">
+                                {{ form.subcategory.label }} <span class="text-danger">*</span>
+                            </label>
+                            {{ form.subcategory }}
+                            {% if form.subcategory.errors %}
+                                <div class="text-danger small mt-1">
+                                    {% for error in form.subcategory.errors %}{{ error }}{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="{{ form.amount.id_for_label }}" class="form-label">
+                                {{ form.amount.label }} <span class="text-danger">*</span>
+                            </label>
+                            <div class="input-group">
+                                {{ form.amount }}
+                                <span class="input-group-text">₽</span>
+                            </div>
+                            {% if form.amount.errors %}
+                                <div class="text-danger small mt-1">
+                                    {% for error in form.amount.errors %}{{ error }}{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-12">
+                            <label for="{{ form.comment.id_for_label }}" class="form-label">
+                                {{ form.comment.label }}
+                            </label>
+                            {{ form.comment }}
+                            {% if form.comment.errors %}
+                                <div class="text-danger small mt-1">
+                                    {% for error in form.comment.errors %}{{ error }}{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    {% if form.non_field_errors %}
+                        <div class="alert alert-danger mt-3">
+                            {% for error in form.non_field_errors %}
+                                {{ error }}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+
+                    <div class="d-flex justify-content-between mt-4">
+                        <a href="{% url 'core:index' %}" class="btn btn-secondary">
+                            <i class="bi bi-arrow-left"></i> Назад к записям
+                        </a>
+                        <div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-circle"></i>
+                                {% if action == 'create' %}Создать запись{% else %}Обновить запись{% endif %}
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    // Каскадная фильтрация: Тип -> Категория -> Подкатегория
+    
+    // При изменении типа обновляем категории
+    $('#id_type').change(function() {
+        var typeId = $(this).val();
+        var categorySelect = $('#id_category');
+        var subcategorySelect = $('#id_subcategory');
+        
+        if (typeId) {
+            $.ajax({
+                url: '{% url "core:get_categories_by_type" 0 %}'.replace('0', typeId),
+                success: function(data) {
+                    categorySelect.empty().append('<option value="">---------</option>');
+                    $.each(data, function(index, category) {
+                        categorySelect.append('<option value="' + category.id + '">' + category.name + '</option>');
+                    });
+                    // Очищаем подкатегории при смене типа
+                    subcategorySelect.empty().append('<option value="">---------</option>');
+                }
+            });
+        } else {
+            categorySelect.empty().append('<option value="">---------</option>');
+            subcategorySelect.empty().append('<option value="">---------</option>');
+        }
+    });
+    
+    // При изменении категории обновляем подкатегории
+    $('#id_category').change(function() {
+        var categoryId = $(this).val();
+        var subcategorySelect = $('#id_subcategory');
+        
+        if (categoryId) {
+            $.ajax({
+                url: '{% url "core:get_subcategories_by_category" 0 %}'.replace('0', categoryId),
+                success: function(data) {
+                    subcategorySelect.empty().append('<option value="">---------</option>');
+                    $.each(data, function(index, subcategory) {
+                        subcategorySelect.append('<option value="' + subcategory.id + '">' + subcategory.name + '</option>');
+                    });
+                }
+            });
+        } else {
+            subcategorySelect.empty().append('<option value="">---------</option>');
+        }
+    });
+    
+    // Инициализация при загрузке страницы
+    var isEditMode = '{{ action }}' === 'edit';
+    
+    if (isEditMode) {
+        // При редактировании сохраняем текущие значения и загружаем подкатегории
+        var currentCategoryId = $('#id_category').val();
+        if (currentCategoryId) {
+            $.ajax({
+                url: '{% url "core:get_subcategories_by_category" 0 %}'.replace('0', currentCategoryId),
+                success: function(data) {
+                    var currentSubcategoryId = $('#id_subcategory').val();
+                    $('#id_subcategory').empty().append('<option value="">---------</option>');
+                    $.each(data, function(index, subcategory) {
+                        var selected = (subcategory.id == currentSubcategoryId) ? ' selected' : '';
+                        $('#id_subcategory').append('<option value="' + subcategory.id + '"' + selected + '>' + subcategory.name + '</option>');
+                    });
+                }
+            });
+        }
+    } else {
+        // При создании новой записи инициализируем каскадную фильтрацию
+        $('#id_type').trigger('change');
+    }
+});
+</script>
+{% endblock %}
