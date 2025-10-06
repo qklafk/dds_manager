@@ -4,12 +4,16 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
+import logging
 
 from .models import Status, Type, Category, Subcategory, CashFlowRecord
 from .forms import (
     CashFlowRecordForm, CashFlowFilterForm, 
     StatusForm, TypeForm, CategoryForm, SubcategoryForm
 )
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 
 def index(request):
@@ -33,6 +37,20 @@ def index(request):
             records = records.filter(category=filter_form.cleaned_data['category'])
         if filter_form.cleaned_data.get('subcategory'):
             records = records.filter(subcategory=filter_form.cleaned_data['subcategory'])
+    
+    # Инициализируем фильтры для правильного отображения зависимых полей
+    if filter_form.is_valid():
+        # Если выбран тип, обновляем queryset категорий
+        if filter_form.cleaned_data.get('type'):
+            filter_form.fields['category'].queryset = Category.objects.filter(
+                type=filter_form.cleaned_data['type']
+            ).order_by('name')
+        
+        # Если выбрана категория, обновляем queryset подкатегорий
+        if filter_form.cleaned_data.get('category'):
+            filter_form.fields['subcategory'].queryset = Subcategory.objects.filter(
+                category=filter_form.cleaned_data['category']
+            ).order_by('name')
     
     # Расчет аналитики
     total_records = records.count()
@@ -69,9 +87,16 @@ def record_create(request):
     if request.method == 'POST':
         form = CashFlowRecordForm(request.POST)
         if form.is_valid():
-            form.save()
-            messages.success(request, 'Запись денежного потока успешно создана!')
-            return redirect('core:index')
+            try:
+                record = form.save()
+                logger.info(f"Создана новая запись ДДС: ID={record.id}, сумма={record.amount}")
+                messages.success(request, 'Запись денежного потока успешно создана!')
+                return redirect('core:index')
+            except Exception as e:
+                logger.error(f"Ошибка при создании записи ДДС: {str(e)}")
+                messages.error(request, 'Произошла ошибка при создании записи.')
+        else:
+            logger.warning(f"Ошибка валидации формы создания записи: {form.errors}")
     else:
         form = CashFlowRecordForm()
     
@@ -128,12 +153,18 @@ def record_delete(request, pk):
     record = get_object_or_404(CashFlowRecord, pk=pk)
     
     if request.method == 'POST':
-        # Удаляем запись из базы данных
-        record.delete()
-        # Показываем сообщение об успехе
-        messages.success(request, 'Запись денежного потока успешно удалена!')
-        # Перенаправляем на главную страницу
-        return redirect('core:index')
+        try:
+            # Логируем удаление записи
+            logger.info(f"Удаление записи ДДС: ID={record.id}, сумма={record.amount}")
+            # Удаляем запись из базы данных
+            record.delete()
+            # Показываем сообщение об успехе
+            messages.success(request, 'Запись денежного потока успешно удалена!')
+            # Перенаправляем на главную страницу
+            return redirect('core:index')
+        except Exception as e:
+            logger.error(f"Ошибка при удалении записи ДДС: {str(e)}")
+            messages.error(request, 'Произошла ошибка при удалении записи.')
     
     # Для GET запроса показываем страницу подтверждения
     context = {
@@ -409,11 +440,31 @@ def get_categories_by_type(request, type_id):
     AJAX endpoint для динамического обновления списка категорий
     при выборе типа. Возвращает JSON с ID и названиями категорий.
     """
-    # Получаем категории для выбранного типа
-    categories = Category.objects.filter(type_id=type_id).order_by('name')
-    # Формируем JSON данные для JavaScript
-    data = [{'id': cat.id, 'name': cat.name} for cat in categories]
-    return JsonResponse(data, safe=False)
+    try:
+        # Валидация и санитизация входных данных
+        type_id = int(type_id)
+        if type_id <= 0:
+            return JsonResponse({'error': 'Invalid type ID'}, status=400)
+        
+        # Проверяем существование типа
+        if not Type.objects.filter(id=type_id).exists():
+            return JsonResponse({'error': 'Type not found'}, status=404)
+        
+        # Получаем категории для выбранного типа с защитой от SQL-инъекций
+        categories = Category.objects.filter(type_id=type_id).order_by('name')
+        
+        # Формируем JSON данные для JavaScript с экранированием
+        data = [{'id': cat.id, 'name': cat.name} for cat in categories]
+        return JsonResponse(data, safe=False)
+        
+    except (ValueError, TypeError):
+        return JsonResponse({'error': 'Invalid type ID format'}, status=400)
+    except Exception as e:
+        # Логируем ошибку для мониторинга
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in get_categories_by_type: {str(e)}")
+        return JsonResponse({'error': 'Internal server error'}, status=500)
 
 
 @require_http_methods(["GET"])
@@ -424,8 +475,28 @@ def get_subcategories_by_category(request, category_id):
     AJAX endpoint для динамического обновления списка подкатегорий
     при выборе категории. Возвращает JSON с ID и названиями подкатегорий.
     """
-    # Получаем подкатегории для выбранной категории
-    subcategories = Subcategory.objects.filter(category_id=category_id).order_by('name')
-    # Формируем JSON данные для JavaScript
-    data = [{'id': sub.id, 'name': sub.name} for sub in subcategories]
-    return JsonResponse(data, safe=False)
+    try:
+        # Валидация и санитизация входных данных
+        category_id = int(category_id)
+        if category_id <= 0:
+            return JsonResponse({'error': 'Invalid category ID'}, status=400)
+        
+        # Проверяем существование категории
+        if not Category.objects.filter(id=category_id).exists():
+            return JsonResponse({'error': 'Category not found'}, status=404)
+        
+        # Получаем подкатегории для выбранной категории с защитой от SQL-инъекций
+        subcategories = Subcategory.objects.filter(category_id=category_id).order_by('name')
+        
+        # Формируем JSON данные для JavaScript с экранированием
+        data = [{'id': sub.id, 'name': sub.name} for sub in subcategories]
+        return JsonResponse(data, safe=False)
+        
+    except (ValueError, TypeError):
+        return JsonResponse({'error': 'Invalid category ID format'}, status=400)
+    except Exception as e:
+        # Логируем ошибку для мониторинга
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in get_subcategories_by_category: {str(e)}")
+        return JsonResponse({'error': 'Internal server error'}, status=500)

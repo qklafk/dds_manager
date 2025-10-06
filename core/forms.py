@@ -1,7 +1,49 @@
 from django import forms
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+from django.utils.html import escape
+from django.core.validators import RegexValidator
+import re
 from .models import Status, Type, Category, Subcategory, CashFlowRecord
+
+
+# Валидаторы для защиты от SQL-инъекций
+def validate_no_sql_injection(value):
+    """Валидатор для проверки на SQL-инъекции"""
+    if not value:
+        return value
+    
+    # Список опасных SQL-ключевых слов и символов
+    dangerous_patterns = [
+        r'(\b(union|select|insert|update|delete|drop|create|alter|exec|execute)\b)',
+        r'(\b(or|and)\s+\d+\s*=\s*\d+)',
+        r'(\b(or|and)\s+\w+\s*=\s*\w+)',
+        r'(\'|\"|;|--|\/\*|\*\/)',
+        r'(\b(script|javascript|vbscript|onload|onerror)\b)',
+        r'(\<|\>|&lt;|&gt;)',
+    ]
+    
+    value_str = str(value).lower()
+    for pattern in dangerous_patterns:
+        if re.search(pattern, value_str, re.IGNORECASE):
+            raise ValidationError(
+                f"Обнаружены потенциально опасные символы или SQL-команды в поле: {value}"
+            )
+    return value
+
+
+def sanitize_input(value):
+    """Функция для санитизации входных данных"""
+    if not value:
+        return value
+    
+    # Экранируем HTML-теги
+    value = escape(str(value))
+    
+    # Удаляем лишние пробелы
+    value = value.strip()
+    
+    return value
 
 
 class CashFlowRecordForm(forms.ModelForm):
@@ -56,6 +98,16 @@ class CashFlowRecordForm(forms.ModelForm):
                 self.fields['subcategory'].queryset = Subcategory.objects.filter(category_id=category_id)
             except (ValueError, TypeError):
                 pass
+
+    def clean_comment(self):
+        """Валидация и санитизация комментария"""
+        comment = self.cleaned_data.get('comment')
+        if comment:
+            # Проверяем на SQL-инъекции
+            validate_no_sql_injection(comment)
+            # Санитизируем входные данные
+            comment = sanitize_input(comment)
+        return comment
 
     def clean(self):
         """Проверка бизнес-правил: подкатегория должна принадлежать выбранной категории, категория - выбранному типу"""
@@ -141,7 +193,8 @@ class CashFlowFilterForm(forms.Form):
         Инициализация формы фильтрации.
         
         Настраиваем queryset'ы для всех полей, сортируя их по алфавиту
-        для удобства пользователей.
+        для удобства пользователей. Добавляем динамическую фильтрацию
+        категорий по типу и подкатегорий по категории.
         """
         super().__init__(*args, **kwargs)
         
@@ -149,11 +202,27 @@ class CashFlowFilterForm(forms.Form):
         self.fields['status'].queryset = Status.objects.all().order_by('name')
         self.fields['type'].queryset = Type.objects.all().order_by('name')
         self.fields['category'].queryset = Category.objects.all().order_by('name')
-        self.fields['subcategory'].queryset = Subcategory.objects.all().order_by('name')
+        self.fields['subcategory'].queryset = Subcategory.objects.none()
         
         # Устанавливаем правильный формат для полей даты
         self.fields['date_from'].input_formats = ['%Y-%m-%d']
         self.fields['date_to'].input_formats = ['%Y-%m-%d']
+        
+        # Динамическая фильтрация категорий по типу
+        if self.is_bound and 'type' in self.data:
+            try:
+                type_id = int(self.data.get('type'))
+                self.fields['category'].queryset = Category.objects.filter(type_id=type_id).order_by('name')
+            except (ValueError, TypeError):
+                pass
+        
+        # Динамическая фильтрация подкатегорий по категории
+        if self.is_bound and 'category' in self.data:
+            try:
+                category_id = int(self.data.get('category'))
+                self.fields['subcategory'].queryset = Subcategory.objects.filter(category_id=category_id).order_by('name')
+            except (ValueError, TypeError):
+                pass
 
     def clean(self):
         """
@@ -196,6 +265,26 @@ class DirectoryForm(forms.ModelForm):
             'name': 'Название',
             'description': 'Описание',
         }
+
+    def clean_name(self):
+        """Валидация и санитизация названия"""
+        name = self.cleaned_data.get('name')
+        if name:
+            # Проверяем на SQL-инъекции
+            validate_no_sql_injection(name)
+            # Санитизируем входные данные
+            name = sanitize_input(name)
+        return name
+
+    def clean_description(self):
+        """Валидация и санитизация описания"""
+        description = self.cleaned_data.get('description')
+        if description:
+            # Проверяем на SQL-инъекции
+            validate_no_sql_injection(description)
+            # Санитизируем входные данные
+            description = sanitize_input(description)
+        return description
 
 
 class StatusForm(DirectoryForm):

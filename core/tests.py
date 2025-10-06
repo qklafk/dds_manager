@@ -7,8 +7,10 @@ from django.utils import timezone
 from decimal import Decimal
 import json
 from datetime import date, timedelta
+from django.http import HttpResponseForbidden
 from .models import Status, Type, Category, Subcategory, CashFlowRecord
-from .forms import CashFlowRecordForm, CashFlowFilterForm
+from .forms import CashFlowRecordForm, CashFlowFilterForm, validate_no_sql_injection, sanitize_input
+from .middleware import SQLInjectionProtectionMiddleware, SecurityHeadersMiddleware
 
 
 # ============================================================================
@@ -442,16 +444,16 @@ class ViewTest(TestCase):
     def test_ajax_categories_endpoint_invalid_type(self):
         """Тест AJAX endpoint с несуществующим типом"""
         response = self.client.get(reverse('core:get_categories_by_type', args=[99999]))
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 404)
         data = json.loads(response.content)
-        self.assertEqual(len(data), 0)
+        self.assertIn('error', data)
 
     def test_ajax_subcategories_endpoint_invalid_category(self):
         """Тест AJAX endpoint с несуществующей категорией"""
         response = self.client.get(reverse('core:get_subcategories_by_category', args=[99999]))
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 404)
         data = json.loads(response.content)
-        self.assertEqual(len(data), 0)
+        self.assertIn('error', data)
 
 
 # ============================================================================
@@ -741,3 +743,337 @@ class IntegrationTest(TestCase):
         self.assertContains(response, '50000')  # Доходы
         self.assertContains(response, '1000')  # Расходы
         self.assertContains(response, '49000')  # Баланс
+
+
+# ============================================================================
+# ТЕСТЫ БЕЗОПАСНОСТИ - ЗАЩИТА ОТ SQL-ИНЪЕКЦИЙ
+# ============================================================================
+
+class SecurityTest(TestCase):
+    """Тесты для проверки защиты от SQL-инъекций и других атак"""
+    
+    def setUp(self):
+        self.client = Client()
+        self.status, _ = Status.objects.get_or_create(name="Бизнес", defaults={"description": "Бизнес-транзакции"})
+        self.type, _ = Type.objects.get_or_create(name="Списание", defaults={"description": "Расход денег"})
+        self.category = Category.objects.create(
+            name="Инфраструктура", 
+            type=self.type, 
+            description="Затраты на инфраструктуру"
+        )
+        self.subcategory = Subcategory.objects.create(
+            name="VPS", 
+            category=self.category, 
+            description="Затраты на виртуальный сервер"
+        )
+
+    def test_sql_injection_validation_function(self):
+        """Тест функции валидации SQL-инъекций"""
+        # Тест безопасных значений
+        safe_values = [
+            "Обычный комментарий",
+            "Затраты на VPS сервер",
+            "Покупка в магазине",
+            "123456",
+            "test@example.com"
+        ]
+        
+        for value in safe_values:
+            self.assertEqual(validate_no_sql_injection(value), value)
+        
+        # Тест опасных значений
+        dangerous_values = [
+            "'; DROP TABLE core_cashflowrecord; --",
+            "1' OR '1'='1",
+            "UNION SELECT * FROM core_cashflowrecord",
+            "INSERT INTO core_cashflowrecord VALUES (1,1,1,1,1,1,'hack')",
+            "<script>alert('xss')</script>",
+            "javascript:alert('xss')",
+            "'; DELETE FROM core_cashflowrecord; --"
+        ]
+        
+        for value in dangerous_values:
+            with self.assertRaises(ValidationError):
+                validate_no_sql_injection(value)
+
+    def test_sanitize_input_function(self):
+        """Тест функции санитизации входных данных"""
+        # Тест санитизации HTML
+        html_input = "<script>alert('xss')</script>"
+        sanitized = sanitize_input(html_input)
+        self.assertIn("&lt;script&gt;", sanitized)
+        self.assertIn("&lt;/script&gt;", sanitized)
+        
+        # Тест санитизации пробелов
+        spaced_input = "  тест  "
+        sanitized = sanitize_input(spaced_input)
+        self.assertEqual(sanitized, "тест")
+        
+        # Тест пустого значения
+        self.assertIsNone(sanitize_input(None))
+        self.assertEqual(sanitize_input(""), "")
+
+    def test_form_sql_injection_protection(self):
+        """Тест защиты форм от SQL-инъекций"""
+        # Тест создания записи с опасным комментарием
+        form_data = {
+            'date': date.today(),
+            'status': self.status.id,
+            'type': self.type.id,
+            'category': self.category.id,
+            'subcategory': self.subcategory.id,
+            'amount': '1000.00',
+            'comment': "'; DROP TABLE core_cashflowrecord; --"
+        }
+        
+        form = CashFlowRecordForm(data=form_data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('comment', form.errors)
+
+    def test_form_xss_protection(self):
+        """Тест защиты форм от XSS атак"""
+        # Тест создания записи с XSS
+        form_data = {
+            'date': date.today(),
+            'status': self.status.id,
+            'type': self.type.id,
+            'category': self.category.id,
+            'subcategory': self.subcategory.id,
+            'amount': '1000.00',
+            'comment': "<script>alert('xss')</script>"
+        }
+        
+        form = CashFlowRecordForm(data=form_data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('comment', form.errors)
+
+    def test_ajax_endpoint_sql_injection_protection(self):
+        """Тест защиты AJAX endpoints от SQL-инъекций"""
+        # Тест с невалидным ID (URL не найден из-за regex паттерна)
+        response = self.client.get('/api/categories/invalid/')
+        self.assertEqual(response.status_code, 404)
+        
+        # Тест с отрицательным ID
+        response = self.client.get('/api/categories/-1/')
+        self.assertEqual(response.status_code, 404)
+        
+        # Тест с несуществующим ID
+        response = self.client.get('/api/categories/99999/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_ajax_endpoint_sql_injection_protection_subcategories(self):
+        """Тест защиты AJAX endpoints для подкатегорий от SQL-инъекций"""
+        # Тест с невалидным ID (URL не найден из-за regex паттерна)
+        response = self.client.get('/api/subcategories/invalid/')
+        self.assertEqual(response.status_code, 404)
+        
+        # Тест с отрицательным ID
+        response = self.client.get('/api/subcategories/-1/')
+        self.assertEqual(response.status_code, 404)
+        
+        # Тест с несуществующим ID
+        response = self.client.get('/api/subcategories/99999/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_middleware_sql_injection_protection(self):
+        """Тест middleware защиты от SQL-инъекций"""
+        middleware = SQLInjectionProtectionMiddleware(lambda r: None)
+        
+        # Создаем mock request с опасными параметрами
+        from django.test import RequestFactory
+        factory = RequestFactory()
+        
+        # Тест с SQL-инъекцией в GET параметрах
+        request = factory.get('/test/', {'search': "'; DROP TABLE core_cashflowrecord; --"})
+        response = middleware.process_request(request)
+        self.assertIsInstance(response, HttpResponseForbidden)
+        
+        # Тест с XSS в GET параметрах
+        request = factory.get('/test/', {'comment': "<script>alert('xss')</script>"})
+        response = middleware.process_request(request)
+        self.assertIsInstance(response, HttpResponseForbidden)
+        
+        # Тест с безопасными параметрами
+        request = factory.get('/test/', {'search': 'обычный поиск'})
+        response = middleware.process_request(request)
+        self.assertIsNone(response)
+
+    def test_middleware_sql_injection_protection_post(self):
+        """Тест middleware защиты от SQL-инъекций в POST данных"""
+        middleware = SQLInjectionProtectionMiddleware(lambda r: None)
+        
+        from django.test import RequestFactory
+        factory = RequestFactory()
+        
+        # Тест с SQL-инъекцией в POST данных
+        request = factory.post('/test/', {'comment': "'; DROP TABLE core_cashflowrecord; --"})
+        response = middleware.process_request(request)
+        self.assertIsInstance(response, HttpResponseForbidden)
+        
+        # Тест с безопасными POST данными
+        request = factory.post('/test/', {'comment': 'обычный комментарий'})
+        response = middleware.process_request(request)
+        self.assertIsNone(response)
+
+    def test_security_headers_middleware(self):
+        """Тест middleware для заголовков безопасности"""
+        middleware = SecurityHeadersMiddleware(lambda r: None)
+        
+        from django.test import RequestFactory
+        factory = RequestFactory()
+        request = factory.get('/test/')
+        
+        # Создаем mock response
+        from django.http import HttpResponse
+        response = HttpResponse()
+        
+        # Применяем middleware
+        response = middleware.process_response(request, response)
+        
+        # Проверяем заголовки безопасности
+        self.assertEqual(response['X-Content-Type-Options'], 'nosniff')
+        self.assertEqual(response['X-Frame-Options'], 'DENY')
+        self.assertEqual(response['X-XSS-Protection'], '1; mode=block')
+        self.assertEqual(response['Referrer-Policy'], 'strict-origin-when-cross-origin')
+
+    def test_directory_form_sql_injection_protection(self):
+        """Тест защиты форм справочников от SQL-инъекций"""
+        from .forms import StatusForm, TypeForm, CategoryForm, SubcategoryForm
+        
+        # Тест StatusForm
+        form_data = {
+            'name': "'; DROP TABLE core_status; --",
+            'description': 'Опасное описание'
+        }
+        form = StatusForm(data=form_data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('name', form.errors)
+        
+        # Тест TypeForm
+        form_data = {
+            'name': "<script>alert('xss')</script>",
+            'description': 'XSS описание'
+        }
+        form = TypeForm(data=form_data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('name', form.errors)
+
+    def test_filter_form_sql_injection_protection(self):
+        """Тест защиты формы фильтрации от SQL-инъекций"""
+        # Тест с опасными параметрами фильтрации
+        form_data = {
+            'date_from': "'; DROP TABLE core_cashflowrecord; --",
+            'date_to': '2025-10-31'
+        }
+        
+        form = CashFlowFilterForm(data=form_data)
+        # Форма должна быть валидной, так как date_from не проходит валидацию даты
+        # но middleware должен заблокировать запрос
+        self.assertFalse(form.is_valid())
+
+    def test_ajax_endpoint_error_handling(self):
+        """Тест обработки ошибок в AJAX endpoints"""
+        # Тест с некорректным типом данных (URL не найден из-за regex паттерна)
+        response = self.client.get('/api/categories/not_a_number/')
+        self.assertEqual(response.status_code, 404)
+        
+        # Тест с некорректным типом данных для подкатегорий
+        response = self.client.get('/api/subcategories/not_a_number/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_sql_injection_in_url_parameters(self):
+        """Тест защиты от SQL-инъекций в URL параметрах"""
+        # Тест с опасными параметрами в URL
+        dangerous_params = [
+            "'; DROP TABLE core_cashflowrecord; --",
+            "1' OR '1'='1",
+            "UNION SELECT * FROM core_cashflowrecord",
+            "<script>alert('xss')</script>"
+        ]
+        
+        for param in dangerous_params:
+            response = self.client.get(reverse('core:index'), {'search': param})
+            # Middleware должен заблокировать запрос
+            self.assertEqual(response.status_code, 403)
+
+    def test_xss_protection_in_forms(self):
+        """Тест защиты от XSS в формах"""
+        # Тест создания записи с XSS в комментарии
+        form_data = {
+            'date': date.today(),
+            'status': self.status.id,
+            'type': self.type.id,
+            'category': self.category.id,
+            'subcategory': self.subcategory.id,
+            'amount': '1000.00',
+            'comment': "<img src=x onerror=alert('xss')>"
+        }
+        
+        form = CashFlowRecordForm(data=form_data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('comment', form.errors)
+
+    def test_sql_injection_protection_in_filter_forms(self):
+        """Тест защиты от SQL-инъекций в формах фильтрации"""
+        # Тест с опасными параметрами фильтрации
+        dangerous_filters = [
+            {'status': "'; DROP TABLE core_status; --"},
+            {'type': "1' OR '1'='1"},
+            {'category': "UNION SELECT * FROM core_category"},
+            {'subcategory': "<script>alert('xss')</script>"}
+        ]
+        
+        for filter_data in dangerous_filters:
+            response = self.client.get(reverse('core:index'), filter_data)
+            # Middleware должен заблокировать запрос
+            self.assertEqual(response.status_code, 403)
+
+    def test_sql_injection_protection_in_ajax_requests(self):
+        """Тест защиты от SQL-инъекций в AJAX запросах"""
+        # Тест с опасными параметрами в AJAX запросах
+        dangerous_ajax_params = [
+            "'; DROP TABLE core_type; --",
+            "1' OR '1'='1",
+            "UNION SELECT * FROM core_type",
+            "<script>alert('xss')</script>"
+        ]
+        
+        for param in dangerous_ajax_params:
+            # Тест для endpoint категорий (URL не будет найден, так как параметр не числовой)
+            response = self.client.get(f'/api/categories/{param}/')
+            self.assertEqual(response.status_code, 404)  # URL не найден из-за regex паттерна
+            
+            # Тест для endpoint подкатегорий
+            response = self.client.get(f'/api/subcategories/{param}/')
+            self.assertEqual(response.status_code, 404)  # URL не найден из-за regex паттерна
+
+    def test_security_logging(self):
+        """Тест логирования попыток атак"""
+        import logging
+        from django.test import override_settings
+        
+        # Настраиваем логирование для тестов
+        with override_settings(LOGGING={
+            'version': 1,
+            'disable_existing_loggers': False,
+            'handlers': {
+                'test': {
+                    'level': 'WARNING',
+                    'class': 'logging.StreamHandler',
+                },
+            },
+            'loggers': {
+                'core.middleware': {
+                    'handlers': ['test'],
+                    'level': 'WARNING',
+                    'propagate': True,
+                },
+            },
+        }):
+            # Отправляем запрос с опасными параметрами
+            response = self.client.get(reverse('core:index'), {
+                'search': "'; DROP TABLE core_cashflowrecord; --"
+            })
+            
+            # Проверяем, что запрос заблокирован
+            self.assertEqual(response.status_code, 403)

@@ -344,6 +344,64 @@ $(document).ready(function() {
             $('.date-validation-warning').remove();
         }
     });
+
+    // Динамическая фильтрация категорий по типу
+    $('#id_type').on('change', function() {
+        var typeId = $(this).val();
+        var categorySelect = $('#id_category');
+        var subcategorySelect = $('#id_subcategory');
+        
+        // Очищаем подкатегории при изменении типа
+        subcategorySelect.empty().append('<option value="">Все подкатегории</option>');
+        
+        if (typeId) {
+            // Загружаем категории для выбранного типа
+            $.ajax({
+                url: '{% url "core:get_categories_by_type" 0 %}'.replace('0', typeId),
+                type: 'GET',
+                dataType: 'json',
+                success: function(data) {
+                    categorySelect.empty().append('<option value="">Все категории</option>');
+                    $.each(data, function(index, category) {
+                        categorySelect.append('<option value="' + category.id + '">' + category.name + '</option>');
+                    });
+                },
+                error: function() {
+                    console.log('Ошибка загрузки категорий');
+                }
+            });
+        } else {
+            // Если тип не выбран, показываем все категории
+            categorySelect.empty().append('<option value="">Все категории</option>');
+        }
+    });
+
+    // Динамическая фильтрация подкатегорий по категории
+    $('#id_category').on('change', function() {
+        var categoryId = $(this).val();
+        var subcategorySelect = $('#id_subcategory');
+        
+        if (categoryId) {
+            // Загружаем подкатегории для выбранной категории
+            $.ajax({
+                url: '{% url "core:get_subcategories_by_category" 0 %}'.replace('0', categoryId),
+                type: 'GET',
+                dataType: 'json',
+                success: function(data) {
+                    subcategorySelect.empty().append('<option value="">Все подкатегории</option>');
+                    $.each(data, function(index, subcategory) {
+                        subcategorySelect.append('<option value="' + subcategory.id + '">' + subcategory.name + '</option>');
+                    });
+                },
+                error: function() {
+                    console.log('Ошибка загрузки подкатегорий');
+                }
+            });
+        } else {
+            // Если категория не выбрана, очищаем подкатегории
+            subcategorySelect.empty().append('<option value="">Все подкатегории</option>');
+        }
+    });
 });
 </script>
 {% endblock %}
