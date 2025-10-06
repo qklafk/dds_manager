@@ -188,3 +188,7 @@ LOGGING = {
         },
     },
 }
+
+# Настройки безопасности
+# Отключение middleware защиты для разработки
+DISABLE_SECURITY_MIDDLEWARE = False  # Установите True для отключения middleware

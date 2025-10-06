@@ -897,6 +897,11 @@ class SecurityTest(TestCase):
         request = factory.get('/test/', {'search': 'обычный поиск'})
         response = middleware.process_request(request)
         self.assertIsNone(response)
+        
+        # Тест защиты админки от SQL-инъекций
+        request = factory.get('/admin/', {'username': "admin' OR '1'='1"})
+        response = middleware.process_request(request)
+        self.assertIsInstance(response, HttpResponseForbidden)
 
     def test_middleware_sql_injection_protection_post(self):
         """Тест middleware защиты от SQL-инъекций в POST данных"""

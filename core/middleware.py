@@ -49,17 +49,37 @@ class SQLInjectionProtectionMiddleware(MiddlewareMixin):
         ]
         
         # Паттерны для обнаружения попыток обхода аутентификации
+        # Более специфичные паттерны, чтобы не блокировать легитимные случаи
         self.auth_bypass_patterns = [
-            r'(\b(admin|administrator|root|sa|guest|test|demo)\b)',
-            r'(\b(password|passwd|pwd|secret|key|token)\b)',
-            r'(\b(login|logon|signin|signon)\b)',
-            r'(\b(auth|authentication|authorization)\b)',
+            r'(\b(admin|administrator|root|sa|guest|test|demo)\s*[\'\"])',  # Только с кавычками
+            r'(\b(password|passwd|pwd|secret|key|token)\s*[\'\"])',       # Только с кавычками
+            r'(\b(login|logon|signin|signon)\s*[\'\"])',                  # Только с кавычками
+            r'(\b(auth|authentication|authorization)\s*[\'\"])',          # Только с кавычками
+            r'(\b(admin|administrator|root|sa|guest|test|demo)\s*[=<>])', # С операторами
+            r'(\b(password|passwd|pwd|secret|key|token)\s*[=<>])',        # С операторами
         ]
     
     def process_request(self, request):
         """
         Обработка входящего запроса для проверки на атаки
         """
+        # Отключаем middleware в режиме отладки, если указано в настройках
+        if getattr(settings, 'DISABLE_SECURITY_MIDDLEWARE', False):
+            return None
+        
+        # Исключаем только статические файлы из проверки
+        excluded_paths = [
+            '/static/',
+            '/media/',
+            '/favicon.ico',
+            '/robots.txt',
+        ]
+        
+        # Проверяем, не является ли путь исключенным
+        for excluded_path in excluded_paths:
+            if request.path.startswith(excluded_path):
+                return None
+        
         # Получаем все параметры запроса
         all_params = {}
         
